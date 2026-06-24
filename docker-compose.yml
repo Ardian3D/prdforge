@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: prdforge-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: prdforge
+      POSTGRES_PASSWORD: prdforge
+      POSTGRES_DB: prdforge
+    ports:
+      - "5432:5432"
+    volumes:
+      - prdforge_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prdforge"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: prdforge-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - prdforge_redisdata:/data
+
+volumes:
+  prdforge_pgdata:
+  prdforge_redisdata:

@@ -1,0 +1,191 @@
+// PRDForge — Prisma schema
+// Data model sesuai PRD section 13 (ERD)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  // Supabase: url = koneksi pooled (pgBouncer, port 6543),
+  // directUrl = koneksi langsung (port 5432) untuk migrasi.
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------- Enums ----------
+
+enum AuthProvider {
+  email
+  google
+}
+
+enum Role {
+  user
+  admin
+}
+
+enum Tier {
+  free
+  starter
+  pro
+  probundle
+}
+
+enum PrdLanguage {
+  id
+  en
+}
+
+enum ChatRole {
+  user
+  assistant
+}
+
+enum FraudAction {
+  blocked
+  flagged
+  allowed
+}
+
+enum PaymentStatus {
+  pending
+  success
+  failed
+  refunded
+}
+
+// ---------- Models ----------
+
+model User {
+  id                    String       @id @default(uuid()) @db.Uuid
+  email                 String       @unique
+  name                  String?
+  passwordHash          String?      @map("password_hash")
+  provider              AuthProvider @default(email)
+  googleId              String?      @unique @map("google_id")
+  role                  Role         @default(user)
+  tier                  Tier         @default(free)
+
+  // Usage counters — sisa kuota. -1 berarti unlimited (Pro/Pro Bundle).
+  generationCount       Int          @default(3) @map("generation_count")
+  revisionCount         Int          @default(3) @map("revision_count")
+
+  // Anti-fraud / device tracking
+  deviceFingerprintHash String?      @map("device_fingerprint_hash")
+  lastIp                String?      @map("last_ip")
+  lastIpSubnet          String?      @map("last_ip_subnet")
+
+  // Moderation
+  isBanned              Boolean      @default(false) @map("is_banned")
+  banReason             String?      @map("ban_reason")
+
+  // Subscription lifecycle
+  tierExpiresAt         DateTime?    @map("tier_expires_at")
+  usageResetAt          DateTime?    @map("usage_reset_at")
+
+  createdAt             DateTime     @default(now()) @map("created_at")
+  updatedAt             DateTime     @updatedAt @map("updated_at")
+
+  prds                  Prd[]
+  payments              Payment[]
+  chatMessages          ChatMessage[]
+
+  @@index([deviceFingerprintHash])
+  @@index([tier])
+  @@map("users")
+}
+
+model Prd {
+  id               String        @id @default(uuid()) @db.Uuid
+  userId           String        @map("user_id") @db.Uuid
+  title            String
+  descriptionInput String        @map("description_input") @db.Text
+  content          Json          @default("{}") // full 19-section PRD
+  mermaidDiagrams  Json          @default("[]") @map("mermaid_diagrams") // array of {section, code}
+  language         PrdLanguage   @default(id)
+  version          Int           @default(1)
+  isArchived       Boolean       @default(false) @map("is_archived")
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  versions         PrdVersion[]
+  chatMessages     ChatMessage[]
+
+  @@index([userId])
+  @@map("prd")
+}
+
+model PrdVersion {
+  id                String   @id @default(uuid()) @db.Uuid
+  prdId             String   @map("prd_id") @db.Uuid
+  versionNumber     Int      @map("version_number")
+  contentSnapshot   Json     @map("content_snapshot")
+  changeDescription String?  @map("change_description")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  prd               Prd      @relation(fields: [prdId], references: [id], onDelete: Cascade)
+
+  @@index([prdId])
+  @@map("prd_version")
+}
+
+model ChatMessage {
+  id            String   @id @default(uuid()) @db.Uuid
+  prdId         String   @map("prd_id") @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  role          ChatRole
+  content       String   @db.Text
+  targetSection String?  @map("target_section")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  prd           Prd      @relation(fields: [prdId], references: [id], onDelete: Cascade)
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([prdId])
+  @@map("chat_message")
+}
+
+model FraudLog {
+  id             String      @id @default(uuid()) @db.Uuid
+  deviceHash     String?     @map("device_hash")
+  ipAddress      String?     @map("ip_address")
+  ipSubnet       String?     @map("ip_subnet")
+  emailAttempted String?     @map("email_attempted")
+  action         FraudAction
+  reason         String?     @db.Text
+  createdAt      DateTime    @default(now()) @map("created_at")
+
+  @@index([deviceHash])
+  @@index([ipSubnet])
+  @@map("fraud_log")
+}
+
+model Payment {
+  id            String        @id @default(uuid()) @db.Uuid
+  userId        String        @map("user_id") @db.Uuid
+  externalId    String?       @unique @map("external_id")
+  status        PaymentStatus @default(pending)
+  amount        Decimal       @db.Decimal(12, 2)
+  tierPurchased Tier          @map("tier_purchased")
+  provider      String        @default("midtrans")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("payment")
+}
+
+model ApiConfig {
+  id             String   @id @default(uuid()) @db.Uuid
+  provider       String   @unique @default("deepseek")
+  apiKeyEncrypted String? @map("api_key_encrypted") @db.Text
+  model          String   @default("deepseek-v4-pro")
+  isActive       Boolean  @default(true) @map("is_active")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("api_config")
+}
